@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terminal</title>
+    <link rel="icon" href="icon.png" type="image/png" />
+
+    <!-- 嘗試加載本地的 marked.min.js，若不可用則從 CDN 加載 -->
+    <script>
+      try {
+        // 嘗試加載本地的 marked.min.js
+        const script = document.createElement('script');
+        script.src = './marked.min.js';
+        document.head.appendChild(script);
+      } catch (error) {
+        // 若本地標記加載失敗，使用 CDN
+        const script = document.createElement('script');
+        script.src = 'https://cdn.jsdelivr.net/npm/marked/marked.min.js';
+        document.head.appendChild(script);
+      }
+    </script>
+
+    <style>
+      body {
+        margin: 0;
+        background-color: #1a1a1a; /* 維持 Linux 命令行風格 */
+        color: #0f0;
+        font-family: 'Comic Sans MS', cursive, sans-serif; /* 可愛的字體 */
+        display: flex;
+        flex-direction: column;
+        height: 100vh;
+      }
+      #header {
+        display: flex;
+        justify-content: center;
+        padding: 10px;
+        background-color: #1a1a1a; /* 黑灰色背景 */
+      }
+      #model-select {
+        width: 30%; /* 設為30%寬度 */
+        padding: 10px;
+        font-size: 16px;
+        background-color: #333; /* 黑灰色背景 */
+        color: white;
+        font-weight: bold; /* 粗體字 */
+        border: 1px solid #0f0;
+        border-radius: 5px;
+        cursor: pointer;
+      }
+      #model-select:hover {
+        background-color: #444;
+      }
+      #display-area {
+        flex: 8;
+        overflow-y: auto;
+        padding: 10px;
+        border-bottom: 1px solid #0f0;
+        background-color: #222; /* 黑灰色背景 */
+        border-radius: 10px 10px 0 0;
+        white-space: pre-wrap; /* 保持文本格式 */
+      }
+      #input-area {
+        flex: 2;
+        display: flex;
+        flex-direction: column;
+        background-color: #111;
+        border-radius: 0 0 10px 10px;
+        padding: 10px;
+        justify-content: center;
+        align-items: center;
+        gap: 10px; /* 使按鈕間距更大 */
+      }
+      textarea {
+        flex: 1;
+        resize: none;
+        padding: 10px;
+        font-size: 16px;
+        background-color: #333;
+        color: #0f0;
+        border: none;
+        outline: none;
+        border-radius: 5px;
+        width: 100%;
+        font-family: 'Comic Sans MS', cursive, sans-serif; /* 可愛字體 */
+      }
+      button {
+        padding: 10px 20px;
+        font-size: 16px;
+        background-color: #00bfff; /* 天藍色背景 */
+        color: white;
+        font-weight: bold; /* 粗體字 */
+        border: 1px solid #0f0;
+        cursor: pointer;
+        border-radius: 5px;
+        margin: 0 10px; /* 合適的間距 */
+      }
+      button:hover {
+        background-color: #1e90ff; /* 輕微變色 */
+      }
+      .button-container {
+        display: flex;
+        justify-content: center; /* 居中顯示按鈕 */
+        width: 100%;
+      }
+      @media (max-width: 768px) {
+        button,
+        textarea,
+        #model-select {
+          font-size: 14px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 頂部下拉選單 -->
+    <div id="header">
+      <select id="model-select">
+        <option value="gpt-4o-mini">gpt-4o-mini</option>
+        <option value="claude-3-haiku">claude-3-haiku</option>
+        <option value="llama-3.1-70b">llama-3.1-70b</option>
+        <option value="mixtral-8x7b">mixtral-8x7b</option>
+      </select>
+    </div>
+
+    <div id="display-area">
+      <p>Responses will appear here...</p>
+    </div>
+    <div id="input-area">
+      <textarea id="input-text" placeholder="輸入您的內容..."></textarea>
+      <div class="button-container">
+        <button id="submit-button">Send ✈️</button>
+        <button id="reset-button">Reset♻️</button>
+        <button id="clean-button">Clean🧹</button>
+      </div>
+    </div>
+
+    <script>
+      let messageHistory = [];
+      let selectedModel = "gpt-4o-mini"; // 默認模型選擇
+      let apiUrl = ""; // 預設為空，待從 URL 參數設置
+      let backupApiUrl = ""; // 備用 API 域名
+
+      // 從 URL 參數獲取 API 域名
+      const urlParams = new URLSearchParams(window.location.search);
+      const firstApi = urlParams.get('first');  // 從 URL 參數中獲取 'first' API
+      const secondApi = urlParams.get('second'); // 從 URL 參數中獲取 'second' API
+
+      // 設定 API 域名
+      apiUrl = "https://" + firstApi + "/v1/chat/completions"; // 默認優先使用 'first'
+      backupApiUrl = "https://" + secondApi + "/v1/chat/completions"; // 備用的 'second' API
+
+      // 嘗試訪問 API 來檢查其可用性
+      const testApi = async (url) => {
+        try {
+          const response = await fetch(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              messages: [{ role: "user", content: "test" }],
+              model: selectedModel,
+            }),
+          });
+
+          if (!response.ok) throw new Error("API 無法連接");
+          return true;
+        } catch (error) {
+          return false; // 如果無法連接，返回 false
+        }
+      };
+
+      // 設定首選和備用 API
+      const setApiUrl = async () => {
+        if (await testApi(apiUrl)) {
+          console.log("使用首選 API:", apiUrl);
+        } else if (await testApi(backupApiUrl)) {
+          apiUrl = backupApiUrl;
+          console.log("使用備用 API:", apiUrl);
+        } else {
+          alert("無法連接到 API，請檢查 API 設定。");
+        }
+      };
+
+      setApiUrl(); // 初始化時測試 API 可用性
+
+      // 監聽模型選擇變更
+      document.getElementById("model-select").addEventListener("change", (event) => {
+        selectedModel = event.target.value;
+      });
+
+      // 處理顯示區域內的訊息並解析 Markdown
+      const displayMarkdown = (message) => {
+        return marked.parse(message); // 解析 Markdown
+      };
+
+      // 發送訊息
+      document.getElementById("submit-button").addEventListener("click", async () => {
+        const inputText = document.getElementById("input-text").value;
+        const displayArea = document.getElementById("display-area");
+
+        if (!inputText.trim()) {
+          alert("請輸入一些內容。");
+          return;
+        }
+
+        // 記錄訊息並顯示用戶訊息
+        messageHistory.push({ role: "user", content: inputText });
+        displayArea.innerHTML += `<p><strong>user@127.0.0.1:</strong> ${displayMarkdown(inputText)}</p>`;
+
+        try {
+          const response = await fetch(apiUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              messages: messageHistory,
+              model: selectedModel, // 使用選擇的模型
+            }),
+          });
+
+          if (response.ok) {
+            const data = await response.json();
+            const reply =
+              data?.choices?.[0]?.message?.content || "無回應";
+
+            // 記錄回覆並顯示
+            messageHistory.push({ role: "assistant", content: reply });
+
+            // 解析 Markdown 並顯示回覆
+            displayArea.innerHTML += `<p><strong>client@localhost:</strong> ${displayMarkdown(reply)}</p>`;
+          } else {
+            displayArea.innerHTML += `<p><strong>client@localhost:</strong> 錯誤: ${response.statusText}</p>`;
+          }
+        } catch (error) {
+          displayArea.innerHTML += `<p><strong>client@localhost:</strong> 網路錯誤: ${error.message}</p>`;
+        }
+
+        document.getElementById("input-text").value = "";
+        displayArea.scrollTop = displayArea.scrollHeight;
+      });
+
+      // 重置功能 (不清除顯示內容)
+      document.getElementById("reset-button").addEventListener("click", () => {
+        messageHistory = [];
+        document.getElementById("input-text").value = ""; // 清空輸入框
+      });
+
+      // 清空顯示區域
+      document.getElementById("clean-button").addEventListener("click", () => {
+        document.getElementById("display-area").innerHTML =
+          "<p>Responses will appear here...</p>";
+      });
+    </script>
+  </body>
+</html>
